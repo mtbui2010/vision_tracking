@@ -84,12 +84,20 @@ def convert_sequence(
         lines = []
         for r in rs:
             x, y, w, h = r[2], r[3], r[4], r[5]
-            cx = (x + w / 2) / width
-            cy = (y + h / 2) / height
-            nw = w / width
-            nh = h / height
-            if nw <= 0 or nh <= 0:
+            # Clamp bbox to image bounds — MOT gt occasionally has boxes that
+            # extend slightly past the frame edge; ultralytics rejects those.
+            x1 = max(0.0, x)
+            y1 = max(0.0, y)
+            x2 = min(float(width), x + w)
+            y2 = min(float(height), y + h)
+            cw = x2 - x1
+            ch = y2 - y1
+            if cw <= 0 or ch <= 0:
                 continue
+            cx = (x1 + cw / 2) / width
+            cy = (y1 + ch / 2) / height
+            nw = cw / width
+            nh = ch / height
             lines.append(f"{class_id} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}")
         dst_lbl.write_text("\n".join(lines))
         count += 1

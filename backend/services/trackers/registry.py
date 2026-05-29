@@ -29,12 +29,14 @@ def build(name: str, **kwargs) -> BaseTracker:
 
 def _autoload() -> None:
     from .bytetrack import ByteTrack
+    from .custom import CustomTracker
     from .deepsort import DeepSORT
     from .sort import SORT
 
     register("sort", SORT)
     register("deepsort", DeepSORT)
     register("bytetrack", ByteTrack)
+    register("custom", CustomTracker)
 
 
 _autoload()

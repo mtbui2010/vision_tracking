@@ -1,0 +1,5 @@
+path: /home/trung/trung_workdir/vision_tracking/datasets/MOT17_yolo
+train: images/train
+val: images/val
+nc: 1
+names: [person]

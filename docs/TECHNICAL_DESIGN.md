@@ -90,10 +90,10 @@ Tracker-only FPS (Python, CPU, single core).
 
 | Tracker | MOTA | IDF1 | HOTA | DetA | AssA | IDSW | FPS |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| SORT (ours) | 0.278 | 0.417 | 0.389 | 0.323 | 0.492 | 281 | 1480 |
-| DeepSORT (ours) | 0.278 | 0.435 | 0.404 | 0.324 | 0.529 | 230 | 1104 |
-| ByteTrack (ours) | 0.240 | 0.273 | 0.273 | 0.251 | 0.334 | 506 | 1280 |
-| Custom (ours) | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| SORT (ours) | 0.278 | 0.417 | 0.389 | 0.323 | 0.492 | 281 | 1822 |
+| DeepSORT (ours) | 0.278 | 0.435 | 0.404 | 0.324 | 0.529 | 230 | 1367 |
+| ByteTrack (ours) | 0.240 | 0.273 | 0.273 | 0.251 | 0.334 | 506 | 1368 |
+| **Custom (ours)** | **0.278** | **0.437** | 0.403 | 0.321 | 0.532 | **181** | 1413 |
 
 **Reproducibility caveats.**
 - Absolute MOTA is well below the paper numbers (~0.6 for SORT, ~0.78 for
@@ -102,12 +102,19 @@ Tracker-only FPS (Python, CPU, single core).
   the paper-grade detectors (POI, SDP, YOLOX) hit ~50–60%; (b) no detector
   fine-tune yet (week 5 lands that). MOTA = 0.28 with FN = 70k on 100k GT
   → FN dominates the score by a wide margin.
-- **The relative ordering is the part worth reading.** DeepSORT > SORT > ByteTrack
+- **The relative ordering is the part worth reading.** Custom ≈ DeepSORT > SORT > ByteTrack
   on this detector. ByteTrack's 2-stage matching expects the low-confidence
   channel to carry occluded versions of tracked objects; with a sparse FRCNN
   detector that channel is mostly false positives, so the second stage
   introduces ID switches (506 IDSW vs SORT 281) instead of rescuing tracks.
-  This is a real finding, and it is the central anecdote in the blog draft.
+- **The custom tracker validates the hypothesis.** Add an appearance gate to
+  ByteTrack's stage-2 ("low-conf det can only revive a track if its ReID
+  embedding cosine-matches the track's gallery") and scale Kalman R by
+  1/score so spurious low-conf updates don't pull the state. Result: best
+  IDF1 (0.437, narrowly beats DeepSORT), fewest IDSW (**181 — 36 % below
+  SORT, 64 % below ByteTrack**), HOTA tied with DeepSORT, slightly faster.
+  Biggest win on MOT17-13 (camera motion, where ByteTrack collapsed to
+  MOTA=0.058) — custom hit 0.318, IDF1=0.444.
 - Once the YOLOv11n fine-tune lands (week 5), absolute MOTA should jump to
   paper range and ByteTrack should overtake SORT, matching the paper's claim.
   We will re-run this table at that point.

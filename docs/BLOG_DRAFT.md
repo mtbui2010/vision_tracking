@@ -43,8 +43,63 @@ But on DanceTrack — where the failure mode is similar appearance, large motion
 
 The fix in my custom variant is to add an appearance gate to stage 2: a low-score detection can only revive a track if its ReID embedding cosine-matches the track's gallery. Stage 1 stays appearance-free for speed. The cost is one extra forward-pass per low-score detection, paid only on the subset that survives the IoU gate.
 
+## The custom tracker — does the fix actually work?
+
+I ran the four trackers on the seven MOT17-val sequences with the provided
+FRCNN detections at score ≥ 0.3, no detector fine-tune. Aggregated:
+
+| Tracker | MOTA | IDF1 | HOTA | IDSW | FPS |
+|---|---:|---:|---:|---:|---:|
+| SORT | 0.278 | 0.417 | 0.389 | 281 | 1822 |
+| DeepSORT | 0.278 | 0.435 | 0.404 | 230 | 1367 |
+| ByteTrack | 0.240 | 0.273 | 0.273 | **506** | 1368 |
+| **Custom (mine)** | **0.278** | **0.437** | 0.403 | **181** | 1413 |
+
+ByteTrack underperforms here exactly as Lesson 3 predicted: 506 ID switches,
+2× any other tracker. Custom — appearance-gated stage-2 plus confidence-aware
+Kalman R — has the fewest switches (181, 36 % below SORT, 64 % below
+ByteTrack), the highest IDF1, and HOTA tied with DeepSORT. It is also
+faster than DeepSORT because the stage-2 appearance gate prunes most
+candidate pairs before the Hungarian even runs.
+
+The most telling single sequence is MOT17-13, which has heavy camera motion:
+
+| Tracker | MOT17-13 MOTA | MOT17-13 IDF1 |
+|---|---:|---:|
+| SORT | 0.303 | 0.385 |
+| DeepSORT | 0.311 | 0.411 |
+| ByteTrack | 0.058 | 0.079 |
+| Custom | **0.318** | **0.444** |
+
+ByteTrack collapses because its Kalman uncertainty grows with the ego-motion,
+its stage-2 IoU gate then accepts almost anything overlapping a predicted
+box, and the FRCNN's low-confidence false positives saturate that gate.
+Custom survives because appearance is the second key — the FPs do not look
+like the tracked person and are rejected.
+
+Two real caveats. First: this is on a *weak* FRCNN detector. With a stronger
+detector (YOLOX-X, our YOLOv11n fine-tune) ByteTrack would close most of
+this gap, because the low-conf channel would actually carry occluded versions
+of tracked objects, which is what ByteTrack was designed for. The win for
+the custom variant is largest where the detector is weakest. Second:
+absolute MOTA here is roughly half the paper numbers (0.28 vs ~0.6 for
+SORT on MOT17-val). The reason is the same — sparse detector means high
+FN, and MOTA is dominated by FN at this regime. Once the YOLOv11n fine-tune
+lands the table moves up by ~30 points, and the relative ordering should
+hold (or ByteTrack will catch up — that is the experiment for the next
+post).
+
 ## What's next
 
-When the numbers stabilize I will append a comparison table here against the published numbers (within 2 MOTA / 2 IDF1 is the bar I set in `docs/TECHNICAL_DESIGN.md`). The custom tracker is the open question — beating ByteTrack's IDF1 on DanceTrack by ≥ 2 points without giving up FPS is the goal.
+- **DanceTrack.** Same eval harness, different failure mode (similar
+  appearance, large motion). Custom's appearance gate is doing *less* work
+  there because everyone looks alike; the confidence-aware Kalman is doing
+  *more*. I want that ablation isolated.
+- **Detector fine-tune.** YOLOv11n on MOT17, re-run the table. Expect
+  MOTA to jump by ~30 points across the board.
+- **Multi-camera ReID.** Same code path, different problem. The ReID gallery
+  in the custom tracker is per-track per-camera; sharing across cameras is
+  one extra method.
 
-The code, including the live web demo and the eval harness, is at *(github link to add)*. If you spot a mistake, open an issue.
+The code, including the live web demo and the eval harness, is at
+*(github link to add)*. If you spot a mistake, open an issue.

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -sL *)",
+      "Bash(curl -s *)",
+      "Bash(curl -sI *)",
+      "Bash(curl -v --max-time *)",
+      "Bash(awk *)",
+      "Bash(../.venv/bin/python -m pytest *)",
+      "Bash(.venv/bin/python -m pytest *)",
+      "Bash(nvidia-smi)"
+    ]
+  }
+}
