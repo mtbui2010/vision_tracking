@@ -268,77 +268,94 @@ def _compute_hota(
 ) -> tuple[float, float, float]:
     """HOTA = mean over alpha in [0.05..0.95] of sqrt(DetA(a) * AssA(a)).
 
-    This implementation follows Luiten et al. Section 3, with the standard
-    19-threshold integration grid.
+    Per Luiten et al. (IJCV 2020). The IoU matrix per frame is precomputed
+    once and reused across the 19 alpha thresholds — naive impls recompute
+    it 19x, which dominates wall clock on large sequences (MOT17-04 etc).
     """
     alphas = np.arange(0.05, 1.0, 0.05)
-    hota_a = []
-    deta_a = []
-    assa_a = []
+
+    gt_ids_all = sorted({int(i) for f in gt for i in f.ids})
+    pred_ids_all = sorted({int(i) for f in pred for i in f.ids})
+    gt_idx = {tid: i for i, tid in enumerate(gt_ids_all)}
+    pred_idx = {tid: i for i, tid in enumerate(pred_ids_all)}
+    n_g = len(gt_ids_all)
+    n_p = len(pred_ids_all)
+
+    total_gt = sum(int(f.ids.size) for f in gt)
+    total_pred = sum(int(f.ids.size) for f in pred)
+
+    if n_g == 0 or n_p == 0:
+        det_a_only = []
+        for a in alphas:
+            det_a_only.append(0.0 if total_gt + total_pred > 0 else 1.0)
+        det_mean = float(np.mean(det_a_only))
+        return float(np.sqrt(det_mean * 0.0)), det_mean, 0.0
+
+    gt_count_all = np.zeros(n_g, dtype=np.int64)
+    pred_count_all = np.zeros(n_p, dtype=np.int64)
+    for gt_f in gt:
+        for gid in gt_f.ids:
+            gt_count_all[gt_idx[int(gid)]] += 1
+    for pr_f in pred:
+        for pid in pr_f.ids:
+            pred_count_all[pred_idx[int(pid)]] += 1
+
+    # Precompute IoU + Hungarian once per frame — independent of alpha.
+    # Each entry: (rows, cols, ious, gt_ids_per_match, pred_ids_per_match).
+    cached: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+    for gt_f, pr_f in zip(gt, pred):
+        if gt_f.ids.size == 0 or pr_f.ids.size == 0:
+            cached.append((np.zeros(0, dtype=int), np.zeros(0, dtype=int), np.zeros(0),
+                           np.zeros(0, dtype=int), np.zeros(0, dtype=int)))
+            continue
+        iou = iou_batch(gt_f.bboxes, pr_f.bboxes)
+        rows, cols = linear_sum_assignment(1.0 - iou)
+        ious = iou[rows, cols]
+        cached.append((
+            rows.astype(int),
+            cols.astype(int),
+            ious,
+            gt_f.ids[rows].astype(int),
+            pr_f.ids[cols].astype(int),
+        ))
+
+    hota_a: list[float] = []
+    deta_a: list[float] = []
+    assa_a: list[float] = []
     for a in alphas:
-        det_a, ass_a = _hota_at_alpha(gt, pred, a)
-        hota_a.append(np.sqrt(det_a * ass_a))
+        pair_count = np.zeros((n_g, n_p), dtype=np.int64)
+        tp = 0
+        for _, _, ious, gids, pids in cached:
+            mask = ious >= a
+            if not mask.any():
+                continue
+            tp += int(mask.sum())
+            for g_id, p_id in zip(gids[mask], pids[mask]):
+                pair_count[gt_idx[int(g_id)], pred_idx[int(p_id)]] += 1
+
+        det_a = tp / max(tp + (total_pred - tp) + (total_gt - tp), 1)
+        if tp == 0:
+            hota_a.append(0.0)
+            deta_a.append(det_a)
+            assa_a.append(0.0)
+            continue
+
+        tpa_num = 0.0
+        tpa_den = 0
+        for _, _, ious, gids, pids in cached:
+            mask = ious >= a
+            for g_id, p_id in zip(gids[mask], pids[mask]):
+                g = gt_idx[int(g_id)]
+                p = pred_idx[int(p_id)]
+                tpa = pair_count[g, p]
+                fpa = pred_count_all[p] - tpa
+                fna = gt_count_all[g] - tpa
+                tpa_num += tpa / max(tpa + fpa + fna, 1)
+                tpa_den += 1
+        ass_a = tpa_num / max(tpa_den, 1)
+
+        hota_a.append(float(np.sqrt(det_a * ass_a)))
         deta_a.append(det_a)
         assa_a.append(ass_a)
+
     return float(np.mean(hota_a)), float(np.mean(deta_a)), float(np.mean(assa_a))
-
-
-def _hota_at_alpha(
-    gt: list[FrameAnnotations],
-    pred: list[FrameAnnotations],
-    alpha: float,
-) -> tuple[float, float]:
-    tp = 0
-    total_gt = 0
-    total_pred = 0
-    tpa_num = 0.0
-    tpa_den = 0
-
-    gt_ids = sorted({int(i) for f in gt for i in f.ids})
-    pred_ids = sorted({int(i) for f in pred for i in f.ids})
-    if gt_ids and pred_ids:
-        gt_idx = {tid: i for i, tid in enumerate(gt_ids)}
-        pred_idx = {tid: i for i, tid in enumerate(pred_ids)}
-        n_g = len(gt_ids)
-        n_p = len(pred_ids)
-        pair_count = np.zeros((n_g, n_p), dtype=np.int64)
-        gt_count = np.zeros(n_g, dtype=np.int64)
-        pred_count = np.zeros(n_p, dtype=np.int64)
-    else:
-        pair_count = None
-        gt_idx = pred_idx = None
-
-    frame_matches_cache: list[list[tuple[int, int, float]]] = []
-    for gt_f, pr_f in zip(gt, pred):
-        m = _frame_matches(gt_f, pr_f, alpha)
-        frame_matches_cache.append(m)
-        total_gt += int(gt_f.ids.size)
-        total_pred += int(pr_f.ids.size)
-        tp += len(m)
-        if pair_count is not None:
-            for gid in gt_f.ids:
-                gt_count[gt_idx[int(gid)]] += 1
-            for pid in pr_f.ids:
-                pred_count[pred_idx[int(pid)]] += 1
-            for g_idx, p_idx, _ in m:
-                pair_count[gt_idx[int(gt_f.ids[g_idx])], pred_idx[int(pr_f.ids[p_idx])]] += 1
-
-    fp = total_pred - tp
-    fn = total_gt - tp
-    det_a = tp / max(tp + fp + fn, 1)
-
-    if pair_count is None or tp == 0:
-        return det_a, 0.0
-
-    for gt_f, pr_f, m in zip(gt, pred, frame_matches_cache):
-        for g_idx, p_idx, _ in m:
-            g = gt_idx[int(gt_f.ids[g_idx])]
-            p = pred_idx[int(pr_f.ids[p_idx])]
-            tpa = pair_count[g, p]
-            fpa = pred_count[p] - tpa
-            fna = gt_count[g] - tpa
-            tpa_num += tpa / max(tpa + fpa + fna, 1)
-            tpa_den += 1
-
-    ass_a = tpa_num / max(tpa_den, 1)
-    return det_a, ass_a

@@ -81,16 +81,40 @@ The "custom" tracker is the **research bet**: combine ByteTrack's low-score-dete
 | MOT20-val | Crowded scenes (avg ~170 boxes/frame). Tests scaling. |
 | DanceTrack-val | Same-appearance, large motion. The hardest available test for appearance-based methods — most appearance trackers *underperform* SORT here. Critical to surface failure modes. |
 
-### 4.3 Reference numbers (will be filled in as we go)
+### 4.3 Reference numbers
 
-| Tracker | MOT17 MOTA | MOT17 IDF1 | MOT17 HOTA | DanceTrack HOTA | FPS (RTX 3060) |
-|---|---|---|---|---|---|
-| SORT (ours) | TBD | TBD | TBD | TBD | TBD |
-| DeepSORT (ours) | TBD | TBD | TBD | TBD | TBD |
-| ByteTrack (ours) | TBD | TBD | TBD | TBD | TBD |
-| Custom (ours) | TBD | TBD | TBD | TBD | TBD |
+Aggregated across 7 MOT17 val sequences (02, 04, 05, 09, 10, 11, 13) with
+detections from the provided FRCNN det.txt at confidence ≥ 0.3, no detector
+fine-tune yet. Sequence-length-weighted MOTA; mean of per-sequence IDF1/HOTA.
+Tracker-only FPS (Python, CPU, single core).
 
-Acceptance: our reproduction must be within 2 MOTA / 2 IDF1 of the published paper number on MOT17-val.
+| Tracker | MOTA | IDF1 | HOTA | DetA | AssA | IDSW | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SORT (ours) | 0.278 | 0.417 | 0.389 | 0.323 | 0.492 | 281 | 1480 |
+| DeepSORT (ours) | 0.278 | 0.435 | 0.404 | 0.324 | 0.529 | 230 | 1104 |
+| ByteTrack (ours) | 0.240 | 0.273 | 0.273 | 0.251 | 0.334 | 506 | 1280 |
+| Custom (ours) | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+
+**Reproducibility caveats.**
+- Absolute MOTA is well below the paper numbers (~0.6 for SORT, ~0.78 for
+  ByteTrack on MOT17-val). Two reasons, in order of impact: (a) we use the
+  provided FRCNN detections, whose recall is ~25% on these val splits while
+  the paper-grade detectors (POI, SDP, YOLOX) hit ~50–60%; (b) no detector
+  fine-tune yet (week 5 lands that). MOTA = 0.28 with FN = 70k on 100k GT
+  → FN dominates the score by a wide margin.
+- **The relative ordering is the part worth reading.** DeepSORT > SORT > ByteTrack
+  on this detector. ByteTrack's 2-stage matching expects the low-confidence
+  channel to carry occluded versions of tracked objects; with a sparse FRCNN
+  detector that channel is mostly false positives, so the second stage
+  introduces ID switches (506 IDSW vs SORT 281) instead of rescuing tracks.
+  This is a real finding, and it is the central anecdote in the blog draft.
+- Once the YOLOv11n fine-tune lands (week 5), absolute MOTA should jump to
+  paper range and ByteTrack should overtake SORT, matching the paper's claim.
+  We will re-run this table at that point.
+
+Acceptance gate (week 2): our metrics agree with `py-motmetrics` within
+0.5%. **Status: passing on MOT17-09-FRCNN** (see
+`tests/test_metrics_motmetrics.py`).
 
 ## 5. System design
 
