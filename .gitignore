@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.env*.local
+
+# Models / weights / checkpoints
+*.pt
+*.pth
+*.onnx
+*.engine
+checkpoints/
+weights/
+
+# Datasets (too big for git)
+datasets/MOT17/
+datasets/MOT20/
+datasets/DanceTrack/
+datasets/Market-1501/
+datasets/*.zip
+datasets/*.tar.gz
+
+# Outputs
+exports/
+outputs/
+*.mp4
+*.avi
+!docs/**/*.mp4
+
+# Local config
+.env
+.env.local
