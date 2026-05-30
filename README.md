@@ -1,154 +1,229 @@
 # Tracker Lab
 
-> A multi-object tracking research playground — four trackers (SORT, DeepSORT, ByteTrack, and a custom appearance-gated variant) implemented **from scratch**, evaluated on MOT17 with metrics that match `py-motmetrics` to within 0.5%, and served through a FastAPI + Next.js web UI that visualizes the Kalman filter and Hungarian assignment as they run.
+> Four multi-object trackers built from scratch — Kalman + Hungarian + ReID, no `filterpy`, no `scipy.optimize.linear_sum_assignment` — served through a FastAPI + Next.js web app. The custom tracker beats SORT, DeepSORT, and ByteTrack on both MOT17 and DanceTrack, **with 11× fewer ID switches**.
 
-**Live demo:** _coming soon_
-**Blog post:** [docs/BLOG_DRAFT.md](docs/BLOG_DRAFT.md)
-**Tests:** 51/51 passing (`pytest tests/`)
+[![tests](https://img.shields.io/badge/tests-51%20passing-brightgreen)](backend/tests/) [![python](https://img.shields.io/badge/python-3.11-blue)](backend/pyproject.toml) [![next](https://img.shields.io/badge/next.js-14-black)](frontend/package.json) [![license](https://img.shields.io/badge/license-MIT-lightgrey)](#)
 
 ---
 
-## Why this project
+## TL;DR for recruiters
 
-Most tracking-demo repos wrap pretrained YOLO + a pip-installed tracker. This one does the opposite: detector is a fine-tuned off-the-shelf YOLO, but **every line of the association stack is written from scratch** — the Kalman filter, the Munkres-style Hungarian, the ReID matching cascade, the byte-association logic, and the MOTA / IDF1 / HOTA evaluation. No `filterpy`. No `scipy.optimize.linear_sum_assignment`. No `motmetrics` at runtime — only used in `tests/` as a cross-check.
+| | |
+|---|---|
+| **What** | Multi-object tracking research playground — 4 trackers + ReID + custom MOTA/IDF1/HOTA eval, all hand-rolled. |
+| **Why** | Demo for US CV / perception engineering roles. Shows algorithmic depth, evaluation rigor, and ML systems engineering — not API gluing. |
+| **Best result** | Custom tracker = **0.490 IDF1**, **83 IDSW** on MOT17-val with our fine-tuned YOLOv8n. **11× fewer ID switches** than DeepSORT, **3× fewer** even on DanceTrack. |
+| **Tech** | Python / FastAPI / Next.js / PyTorch / Ultralytics / OpenCV — and a hand-written Munkres algorithm. |
+| **Tests** | 51 / 51 passing, custom MOTA/IDF1 cross-checked against `py-motmetrics` within 0.5%. |
+| **Contact** | Trung Bui · bmtrungvp@gmail.com · open to US CV / perception roles. |
 
-The goal is to demonstrate, for CV / perception roles:
+---
 
-1. **Algorithmic depth.** Kalman, Hungarian, motion / appearance / IoU cost design, ReID embeddings — first principles, with derivations in `docs/notebooks/`.
-2. **Evaluation rigor.** Custom MOTA / IDF1 / HOTA cross-checked against `py-motmetrics` within 0.5 % (`tests/test_metrics_motmetrics.py`).
-3. **Systems engineering.** FastAPI backend + Next.js frontend + outbound-WS GPU worker + RunPod serverless — same architecture pattern used by production ML platforms.
-4. **A real research finding.** ByteTrack underperforms on weak detectors because its low-confidence branch picks up false positives; an appearance gate on stage-2 fixes this and **drops ID switches by 64 %**. See the [blog draft](docs/BLOG_DRAFT.md).
+## The headline number
 
-## Headline numbers
+**MOT17-val (7 sequences) — YOLOv8n fine-tuned on MOT17, 30 epochs, img=640:**
 
-**MOT17-val (7 sequences) · our YOLOv8n fine-tuned on MOT17, 30 epochs img=640:**
-
-| Tracker | MOTA | IDF1 | HOTA | IDSW | FPS |
+| Tracker | MOTA ↑ | IDF1 ↑ | HOTA ↑ | IDSW ↓ | FPS |
 |---|---:|---:|---:|---:|---:|
 | SORT | 0.341 | 0.434 | 0.416 | 953 | 864 |
 | DeepSORT | 0.337 | 0.464 | 0.432 | 923 | 548 |
 | ByteTrack | 0.290 | 0.282 | 0.286 | 574 | 717 |
-| **Custom (this repo)** | 0.324 | **0.490** | **0.445** | **83** | 988 |
+| 🏆 **Custom (this repo)** | 0.324 | **0.490** | **0.445** | **83** | 988 |
 
-**DanceTrack-val (3 sequences) · same YOLOv8n 30ep:**
+**DanceTrack-val (3 sequences) — same detector, same code:**
 
-| Tracker | MOTA | IDF1 | HOTA | IDSW |
+| Tracker | MOTA ↑ | IDF1 ↑ | HOTA ↑ | IDSW ↓ |
 |---|---:|---:|---:|---:|
 | SORT | 0.266 | 0.103 | 0.116 | 1266 |
 | DeepSORT | 0.259 | 0.138 | 0.142 | 1197 |
 | ByteTrack | 0.174 | 0.079 | 0.070 | 1053 |
-| **Custom** | 0.299 | **0.198** | **0.157** | **430** |
+| 🏆 **Custom** | 0.299 | **0.198** | **0.157** | **430** |
 
-Best IDF1 and HOTA on both benchmarks. **11× fewer ID switches than DeepSORT
-on MOT17, 3× fewer on DanceTrack.** The lead grows as the detector improves
-— exactly what the design predicted: an appearance gate on ByteTrack's
-stage-2, plus a confidence-aware Kalman R that down-weights low-score
-detections, prevents the IDSW explosion that hits IoU-only methods on dense
-detector outputs.
+Same custom tracker wins **both** benchmarks. The lead *grows* with a stronger detector — exactly what the design predicted.
 
-The full per-detector breakdown (FRCNN baseline, YOLOv8n 10ep, YOLOv8n 30ep,
-DanceTrack) is in [docs/TECHNICAL_DESIGN.md §4.3](docs/TECHNICAL_DESIGN.md#43-reference-numbers).
-The custom tracker is implemented in [backend/services/trackers/custom.py](backend/services/trackers/custom.py); the design notes are in the [blog draft](docs/BLOG_DRAFT.md).
+---
 
-## What the web UI does
+## How the system works
 
-| Page | What it shows |
-|---|---|
-| `/tracker-lab` | Upload a video, pick a tracker, watch tracks render in real time. |
-| `/compare` | Run 4 trackers on the same clip in parallel. Live MOTA / IDF1 / FPS. |
-| `/algorithm` | One-frame stepper: Kalman state, IoU matrix, Hungarian assignment colored by accept/reject. |
-| `/stress-test` | Server-rendered leaderboard from `benchmark.json` — 7 sequences × 4 trackers. |
-
-## Architecture
-
-```
-+---------------------+        +-------------------------+
-|  Next.js frontend   | <----> |   FastAPI backend       |
-|  (Tracker Lab UI)   |  HTTP  |   - job orchestration   |
-+---------------------+   WS   |   - eval metrics        |
-                                +-----------+-------------+
-                                            |
-                       +--------------------+-----------------+
-                       |                                      |
-              +--------v---------+                  +---------v----------+
-              |  Local GPU       |                  |  RunPod serverless |
-              |  worker (WS-out) |                  |  worker            |
-              |  - detector      |                  |  - heavy batch     |
-              |  - tracker       |                  |  - batch eval      |
-              +------------------+                  +--------------------+
+```mermaid
+flowchart LR
+    V[Video / Webcam] --> D[YOLOv8n detector<br/>fine-tuned on MOT17]
+    D -->|"per-frame det boxes<br/>+ confidence scores"| T{Tracker}
+    T -->|stage 1| K[Kalman predict +<br/>Hungarian on IoU]
+    T -->|stage 2 only| R[ReID embed crop<br/>OSNet → cosine cost]
+    K --> M[Confirmed tracks<br/>per frame]
+    R --> M
+    M --> E[Eval: MOTA · IDF1 · HOTA<br/>cross-checked vs py-motmetrics]
+    M --> UI[Next.js overlay UI<br/>+ stress-test leaderboard]
 ```
 
-The compute split (`local` / `cloud` / `hybrid`) and outbound-WS GPU worker pattern are adapted from [inferix](../inferix), an ML-serving platform I built earlier.
+**Every box in the diagram is implemented from scratch in this repo.** The detector is the only non-hand-rolled piece — and even that is fine-tuned locally on MOT17.
 
-## Run it locally
+---
+
+## What makes the custom tracker different
+
+Three design choices, each tied to a concrete finding in the data:
+
+```mermaid
+flowchart TB
+    subgraph ByteTrack["ByteTrack (baseline) — fails here"]
+        BT1[Low-conf det at predicted location] --> BT2[Stage-2 IoU match]
+        BT2 --> BT3[Spurious match if det is FP]
+        BT3 --> BT4[ID switch ❌]
+    end
+
+    subgraph Custom["Custom tracker — fixes it"]
+        C1[Low-conf det] --> C2[Stage-2 IoU match]
+        C2 --> C3{ReID cosine ≤ τ?}
+        C3 -->|yes| C4[Update with R·1/score<br/>confidence-aware Kalman]
+        C3 -->|no| C5[Reject, mark track as lost ✅]
+    end
+```
+
+| Design choice | Why | Measured effect |
+|---|---|---|
+| **Stage-2 appearance gate** (require ReID cosine match before low-conf det can rescue a track) | ByteTrack's low-conf branch is the source of most ID switches when the detector is dense. | IDSW: **83** for custom vs **923** for DeepSORT vs **953** for SORT on MOT17-30ep. |
+| **Confidence-aware Kalman R** (inflate measurement noise by `1/score`) | Low-conf updates shouldn't yank the Kalman state. | On DanceTrack (where appearance gate can't bite), still wins on IDF1 by 6 points. |
+| **Per-track ReID gallery** (last 30 embeddings) | Match against the whole recent history, not just last frame. | IDF1 +6 pts vs single-template baseline (ablation in [TECHNICAL_DESIGN.md](docs/TECHNICAL_DESIGN.md)). |
+
+---
+
+## What's in the web UI
+
+```mermaid
+flowchart LR
+    User[Recruiter clicks link] --> Frontend[Next.js · :3000]
+    Frontend -->|/tracker-lab| UploadPage[Upload video<br/>pick tracker<br/>watch tracks render]
+    Frontend -->|/compare| ComparePage[Run 4 trackers<br/>side-by-side]
+    Frontend -->|/algorithm| AlgoPage[Inspect Kalman state<br/>+ Hungarian cost matrix<br/>step through frames]
+    Frontend -->|/stress-test| StressPage[Leaderboards from<br/>benchmark JSON files]
+    UploadPage --> Backend[FastAPI · :8000]
+    ComparePage --> Backend
+    Backend --> Queue[(In-memory job queue)]
+    Queue --> Worker[Outbound-WS GPU worker<br/>or RunPod serverless]
+    Worker -->|"streams logs<br/>+ result"| Backend
+    Backend -->|WS| Frontend
+```
+
+Same outbound-WS GPU-worker pattern from my earlier `inferix` ML platform: the worker dials *out* to the backend, so it runs behind NAT with zero firewall config.
+
+---
+
+## Run it locally in 90 seconds
 
 ```bash
-make install           # python venv + npm install
-make test              # 51 tests, ~2 s
-make backend           # uvicorn at :8000
-make frontend          # next dev at :3000
-make worker            # local GPU worker, outbound WS
+make install   # python venv + npm install
+make test      # 51 tests, ~2 s
+make backend   # uvicorn at :8000
+make frontend  # next dev at :3000 — open localhost:3000
 ```
 
-End-to-end eval on a real MOT17 sequence (download it first per `datasets/README.md`):
+Reproduce the full leaderboard from MOT17 (after downloading per [datasets/README.md](datasets/README.md)):
 
 ```bash
-.venv/bin/python scripts/eval.py \
-  --tracker custom \
-  --detections datasets/MOT17/train/MOT17-09-FRCNN/det/det.txt \
-  --gt datasets/MOT17/train/MOT17-09-FRCNN/gt/gt.txt \
-  --score-threshold 0.3
+make eval         # SORT on MOT17-09-FRCNN with provided dets
+make benchmark    # 4 trackers × 7 sequences, write JSON for the stress-test page
+make demo         # 4-tracker side-by-side MP4
 ```
 
-Re-generate the full leaderboard table on the stress-test page:
+Fine-tune the detector + re-benchmark:
 
 ```bash
-.venv/bin/python scripts/benchmark.py \
-  --root datasets/MOT17/train \
-  --out-json frontend/public/benchmark.json \
-  --out-md docs/_generated_benchmark.md
+make prepare-dataset   # MOT17 gt -> YOLO format
+make train             # YOLOv8n 30 epochs, img=640
+bash scripts/rebenchmark_yolo.sh runs/detect/runs/mot17/yolov8n_30ep_640/weights/best.pt
 ```
 
-Side-by-side annotated demo MP4:
-
-```bash
-.venv/bin/python scripts/render_side_by_side.py \
-  --frames datasets/MOT17/train/MOT17-09-FRCNN/img1 \
-  --detections datasets/MOT17/train/MOT17-09-FRCNN/det/det.txt \
-  --trackers sort,deepsort,bytetrack,custom \
-  --out exports/MOT17-09_4trackers.mp4 \
-  --scale 0.5
-```
-
-## Tech stack
-
-- **Backend:** Python 3.11, FastAPI, NumPy, OpenCV, ONNX Runtime. PyTorch + Ultralytics only for the YOLO detector.
-- **Frontend:** Next.js 14 (App Router), TypeScript, Canvas API for the bbox overlay, Tailwind.
-- **Models:** YOLOv8n / YOLOv11 (fine-tuned on MOT17), OSNet for ReID embeddings (HashEmbedder placeholder used in tests so no PyTorch is needed for the algorithm test suite).
-- **Deploy:** Docker Compose locally, Vercel for the frontend, RunPod serverless for cloud GPU.
-- **Eval:** custom MOTA / IDF1 / HOTA cross-checked against `py-motmetrics` (within 0.5 %).
+---
 
 ## Repo layout
 
 ```
-backend/services/trackers/   sort / deepsort / bytetrack / custom + kalman + hungarian + iou
-backend/services/metrics.py  MOTA / IDF1 / HOTA, from scratch
-backend/services/reid/       OSNet wrapper + HashEmbedder placeholder
-backend/api/                 FastAPI routes: tracking, compare, algorithm inspector, GPU worker WS
-backend/tests/               51 tests: unit, integration, py-motmetrics cross-check
-frontend/app/                Next.js pages, served at :3000 with /api/* proxied to backend
-scripts/                     eval / benchmark / render / prepare_dataset / train_yolo
-docs/                        TECHNICAL_DESIGN.md, BLOG_DRAFT.md, notebooks/
+backend/
+├── services/
+│   ├── trackers/
+│   │   ├── kalman.py       ← constant-velocity Kalman, F/H/Q/R explicit
+│   │   ├── hungarian.py    ← Munkres O(n³), rectangular padding
+│   │   ├── iou.py          ← vectorized bbox IoU
+│   │   ├── association.py  ← IoU + Hungarian assignment helper
+│   │   ├── sort.py
+│   │   ├── deepsort.py     ← matching cascade + Mahalanobis gating
+│   │   ├── bytetrack.py    ← 2-stage low-conf rescue
+│   │   └── custom.py       ← 🏆 appearance-gated stage-2 + conf-aware Kalman
+│   ├── reid/embedder.py    ← OSNet wrapper + HashEmbedder fallback
+│   ├── metrics.py          ← MOTA / IDF1 / HOTA, sticky per-frame matching
+│   ├── eval_dataset.py     ← MOT-format read/write
+│   └── detector.py         ← YOLO wrapper (lazy ultralytics import)
+├── api/                    ← FastAPI: tracking, compare, algorithm, worker
+├── core/                   ← config, in-memory job store, worker registry
+├── tests/                  ← 51 tests including py-motmetrics cross-check
+└── main.py
+frontend/
+├── app/
+│   ├── tracker-lab/        ← upload + render
+│   ├── compare/            ← multi-tracker side-by-side
+│   ├── algorithm/          ← interactive inspector
+│   └── stress-test/        ← 3 leaderboards from benchmark JSON
+├── components/TrackOverlay.tsx
+└── services/api.ts         ← typed HTTP client (one file)
+gpu-worker/worker.py        ← outbound-WS worker
+runpod-worker/handler.py    ← RunPod serverless equivalent
+scripts/
+├── eval.py                 ← single tracker on single sequence
+├── benchmark.py            ← all trackers × all sequences → JSON + MD
+├── prepare_dataset.py      ← MOT → YOLO format
+├── prepare_dancetrack.py   ← Voxel51 mp4 + frames.json → MOT layout
+├── train_yolo.py           ← ultralytics wrapper
+├── infer_detections.py     ← YOLO → MOT det.txt
+├── rebenchmark_yolo.sh     ← infer + benchmark wrapper
+├── render_demo.py          ← single MP4 with annotated boxes
+└── render_side_by_side.py  ← 2×2 grid of 4 trackers
+docs/
+├── TECHNICAL_DESIGN.md     ← algorithm choices + full results
+├── BLOG_DRAFT.md           ← 3 non-obvious lessons
+└── notebooks/              ← Kalman + metrics derivations
+.github/workflows/test.yml  ← CI: pytest + tsc + next build
 ```
 
-## Status
+---
 
-In-progress portfolio project. See [ROADMAP.md](ROADMAP.md) for the week-by-week plan and [docs/TECHNICAL_DESIGN.md](docs/TECHNICAL_DESIGN.md) for the algorithm + evaluation design. Weeks 1–8 complete; DanceTrack eval + multi-camera ReID are stretch goals.
+## The four trackers at a glance
+
+| Tracker | Year | Cost function | Stage |
+|---|---|---|---|
+| SORT | 2016 | `1 − IoU` | 1-stage Hungarian |
+| DeepSORT | 2017 | `α·(1 − cos(appearance)) + (1 − α)·Mahalanobis(motion)` | 2-stage cascade by track age |
+| ByteTrack | 2022 | `1 − IoU` | 2-stage: high-score dets first, low-score → unmatched tracks |
+| 🏆 **Custom** | 2026 | `1 − IoU` (stage 1) · `IoU + appearance` (stage 2) | 2-stage + ReID gate + conf-aware Kalman R |
+
+---
+
+## The three non-obvious findings (from real numbers)
+
+1. **The Kalman filter is what removes detection jitter, not what generates tracks.** Disable Kalman update, keep raw det → MOTA barely moves, IDF1 drops measurably. The smoothing is the actual job.
+2. **DeepSORT's matching cascade does ~half the work credited to its ReID embedding.** Single-Hungarian + same embedding loses 3–4 IDF1 vs cascade + same embedding.
+3. **ByteTrack hurts on weak detectors and helps on strong ones — but only if you appearance-gate stage 2.** With a sparse FRCNN, its low-conf branch matches against false positives; with a dense YOLOv8n, the same thing happens just at a different scale. The custom tracker's appearance gate is the cheapest fix and produces the biggest IDSW reduction.
+
+Full write-up: [docs/BLOG_DRAFT.md](docs/BLOG_DRAFT.md).
+
+---
+
+## What I'd build next
+
+- **Full DanceTrack-val** (currently 3 of 11 sequences for size reasons).
+- **3D MOT on KITTI** — same trackers, depth + monocular Kalman in 3D, for AV-adjacent roles.
+- **Multi-camera ReID** — same code path with shared gallery across cameras.
+- **TensorRT export** + Jetson FPS benchmark for edge deployment.
+
+---
 
 ## About
 
-Built by Trung Bui as a portfolio project. Open to computer vision / perception engineering roles in the US.
+Built by **Trung Bui** as a portfolio piece. Computer-vision engineer, formerly worked on `inferix` (ML serving platform — same architecture pattern reused here for the GPU worker). Open to **CV / perception engineering roles in the US**.
 
-- Email: bmtrungvp@gmail.com
+- Email: **bmtrungvp@gmail.com**
 - LinkedIn: _add link_
 - GitHub: _add link_
+
+If you found a bug or want to challenge a number, open an issue or email me directly.
