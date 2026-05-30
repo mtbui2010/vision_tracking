@@ -38,6 +38,24 @@ async function loadJson(name: string): Promise<BenchmarkData | null> {
   }
 }
 
+const BENCHMARKS = [
+  {
+    file: 'benchmark_yolo.json',
+    title: 'MOT17 val · YOLOv8n fine-tuned on MOT17 (30 epochs, img=640)',
+    subtitle: 'Detector recall jumps from FRCNN baseline; tracker IDSW for IoU-only methods explodes 3–10×; custom holds.',
+  },
+  {
+    file: 'benchmark_dancetrack.json',
+    title: 'DanceTrack val · same YOLOv8n (3 sequences: 0035, 0047, 0081)',
+    subtitle: 'Same-appearance, large-motion. All methods drop sharply; ordering preserved — custom still wins on IDF1 + IDSW.',
+  },
+  {
+    file: 'benchmark.json',
+    title: 'MOT17 val · provided FRCNN detections (baseline)',
+    subtitle: 'Sparse detector, FN-dominated. Apples-to-apples comparison against published numbers.',
+  },
+];
+
 function fmt(n: number, digits = 4): string {
   return n.toFixed(digits);
 }
@@ -81,12 +99,12 @@ function Leaderboard({ title, data, subtitle }: { title: string; data: Benchmark
 }
 
 export default async function StressTestPage() {
-  const [baseline, yolo] = await Promise.all([
-    loadJson('benchmark.json'),
-    loadJson('benchmark_yolo.json'),
-  ]);
+  const loaded = await Promise.all(
+    BENCHMARKS.map(async (b) => ({ ...b, data: await loadJson(b.file) })),
+  );
+  const present = loaded.filter((b): b is typeof b & { data: BenchmarkData } => b.data !== null);
 
-  if (!baseline && !yolo) {
+  if (present.length === 0) {
     return (
       <div>
         <h1 className="text-2xl font-semibold mb-2">Stress test</h1>
@@ -99,68 +117,56 @@ export default async function StressTestPage() {
     );
   }
 
+  const primary = present[0];
   return (
     <div>
-      <h1 className="text-2xl font-semibold mb-2">Benchmark — MOT17 val</h1>
+      <h1 className="text-2xl font-semibold mb-2">Benchmark leaderboards</h1>
       <p className="text-sm text-neutral-400 mb-6">
-        7 sequences · sequence-length-weighted MOTA, mean IDF1 / HOTA. Computed by
+        Sequence-length-weighted MOTA, mean IDF1 / HOTA. Computed by
         <code className="mx-1 px-1 bg-neutral-900 rounded">scripts/benchmark.py</code>;
         cross-checked against <code className="px-1 bg-neutral-900 rounded">py-motmetrics</code>.
       </p>
 
-      {yolo && (
-        <Leaderboard
-          title="With our YOLOv8n fine-tuned on MOT17"
-          subtitle="10 epochs, img=416. Higher recall, but more dense boxes — IoU-only trackers' IDSW jumps 4–6× vs the FRCNN baseline below."
-          data={yolo}
-        />
-      )}
+      {present.map((b) => (
+        <Leaderboard key={b.file} title={b.title} subtitle={b.subtitle} data={b.data} />
+      ))}
 
-      {baseline && (
-        <Leaderboard
-          title="With provided FRCNN detections (baseline)"
-          subtitle="Sparse detector, FN dominates. Used as the apples-to-apples comparison against published numbers."
-          data={baseline}
-        />
-      )}
-
-      {(yolo || baseline) && (
-        <section>
-          <h2 className="text-lg font-medium mb-2">Per-sequence breakdown (YOLO fine-tune)</h2>
-          <div className="overflow-auto">
-            <table className="text-xs border border-neutral-800 min-w-full">
-              <thead className="bg-neutral-900 text-neutral-300">
-                <tr>
-                  <th className="px-2 py-1 text-left">Sequence</th>
-                  <th className="px-2 py-1 text-left">Tracker</th>
-                  <th className="px-2 py-1 text-right">MOTA</th>
-                  <th className="px-2 py-1 text-right">IDF1</th>
-                  <th className="px-2 py-1 text-right">HOTA</th>
-                  <th className="px-2 py-1 text-right">IDSW</th>
-                  <th className="px-2 py-1 text-right">FPS</th>
+      <section>
+        <h2 className="text-lg font-medium mb-2">Per-sequence breakdown ({primary.title.split(' · ')[0]})</h2>
+        <div className="overflow-auto">
+          <table className="text-xs border border-neutral-800 min-w-full">
+            <thead className="bg-neutral-900 text-neutral-300">
+              <tr>
+                <th className="px-2 py-1 text-left">Sequence</th>
+                <th className="px-2 py-1 text-left">Tracker</th>
+                <th className="px-2 py-1 text-right">MOTA</th>
+                <th className="px-2 py-1 text-right">IDF1</th>
+                <th className="px-2 py-1 text-right">HOTA</th>
+                <th className="px-2 py-1 text-right">IDSW</th>
+                <th className="px-2 py-1 text-right">FPS</th>
+              </tr>
+            </thead>
+            <tbody className="text-neutral-300">
+              {primary.data.per_sequence.map((r, i) => (
+                <tr key={i} className="border-t border-neutral-900">
+                  <td className="px-2 py-1">{r.seq}</td>
+                  <td className="px-2 py-1">{r.tracker}</td>
+                  <td className="px-2 py-1 text-right">{fmt(r.mota)}</td>
+                  <td className="px-2 py-1 text-right">{fmt(r.idf1)}</td>
+                  <td className="px-2 py-1 text-right">{fmt(r.hota)}</td>
+                  <td className="px-2 py-1 text-right">{r.idsw}</td>
+                  <td className="px-2 py-1 text-right">{r.fps.toFixed(0)}</td>
                 </tr>
-              </thead>
-              <tbody className="text-neutral-300">
-                {(yolo ?? baseline)!.per_sequence.map((r, i) => (
-                  <tr key={i} className="border-t border-neutral-900">
-                    <td className="px-2 py-1">{r.seq}</td>
-                    <td className="px-2 py-1">{r.tracker}</td>
-                    <td className="px-2 py-1 text-right">{fmt(r.mota)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(r.idf1)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(r.hota)}</td>
-                    <td className="px-2 py-1 text-right">{r.idsw}</td>
-                    <td className="px-2 py-1 text-right">{r.fps.toFixed(0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <p className="mt-6 text-xs text-neutral-500">
-        Source: <code className="px-1 bg-neutral-900 rounded">frontend/public/benchmark.json</code>{' '}
-        and <code className="px-1 bg-neutral-900 rounded">benchmark_yolo.json</code>.
+        Source files: {present.map((b) => (
+          <code key={b.file} className="mx-1 px-1 bg-neutral-900 rounded">{b.file}</code>
+        ))}
       </p>
     </div>
   );

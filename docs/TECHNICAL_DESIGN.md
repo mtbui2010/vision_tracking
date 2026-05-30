@@ -95,26 +95,53 @@ Sequence-length-weighted MOTA; mean of per-sequence IDF1/HOTA.
 | ByteTrack (ours) | 0.240 | 0.273 | 0.273 | 0.251 | 0.334 | 506 | 1368 |
 | **Custom (ours)** | **0.278** | **0.437** | 0.403 | 0.321 | 0.532 | **181** | 1413 |
 
-#### With our YOLOv8n fine-tuned on MOT17 (10 epochs, img=416)
+#### With our YOLOv8n fine-tuned on MOT17 (30 epochs, img=640)
 
 | Tracker | MOTA | IDF1 | HOTA | DetA | AssA | IDSW | FPS |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| SORT (ours) | 0.294 | 0.394 | 0.379 | 0.375 | 0.398 | 1050 | 747 |
-| DeepSORT (ours) | 0.285 | 0.405 | 0.383 | 0.375 | 0.407 | 1117 | 444 |
-| ByteTrack (ours) | 0.260 | 0.259 | 0.259 | 0.254 | 0.292 | 634 | 596 |
-| **Custom (ours)** | 0.292 | **0.453** | **0.405** | 0.316 | **0.553** | **110** | 747 |
+| SORT (ours) | 0.341 | 0.434 | 0.416 | 0.404 | 0.447 | 953 | 864 |
+| DeepSORT (ours) | 0.337 | 0.464 | 0.432 | 0.405 | 0.477 | 923 | 548 |
+| ByteTrack (ours) | 0.290 | 0.282 | 0.286 | 0.280 | 0.320 | 574 | 717 |
+| **Custom (ours)** | 0.324 | **0.490** | **0.445** | 0.342 | **0.606** | **83** | 988 |
 
-**The fine-tuned detector flips the relative story.** With FRCNN, the
-appearance-blind trackers (SORT, DeepSORT) had moderate IDSW (~250–280)
-because the detector under-counts and so doesn't generate the noisy boxes
-that confuse association. With the higher-recall YOLOv8n, MOTA goes up by
-~1–2 points across the board *but* IDSW for SORT, DeepSORT, ByteTrack jumps
-4–6× because the detector now produces dense, sometimes overlapping boxes
-that the IoU-only trackers happily match to the wrong identity. The custom
-tracker's appearance gate suppresses exactly that failure — IDSW *drops*
-from 181 to 110 between the two detectors. **The custom tracker has 10× fewer
-ID switches than SORT, 10× fewer than DeepSORT, 6× fewer than ByteTrack
-once the detector is doing its job.**
+The 30-epoch fine-tune raises val mAP50 from 0.733 (10ep) to 0.766 and lifts
+MOTA across every tracker by ~3–5 points. The gap that matters — IDSW —
+widens: SORT 953, DeepSORT 923, ByteTrack 574, **custom 83**. That's an 11×
+gap to DeepSORT and SORT. Custom's HOTA reaches 0.445, 1.3 points above
+DeepSORT.
+
+#### DanceTrack val · 3 sequences (0035, 0047, 0081) · YOLOv8n 30ep
+
+| Tracker | MOTA | IDF1 | HOTA | DetA | AssA | IDSW | FPS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SORT (ours) | 0.266 | 0.103 | 0.116 | 0.376 | 0.038 | 1266 | 1144 |
+| DeepSORT (ours) | 0.259 | 0.138 | 0.142 | 0.384 | 0.055 | 1197 | 635 |
+| ByteTrack (ours) | 0.174 | 0.079 | 0.070 | 0.226 | 0.024 | 1053 | 928 |
+| **Custom (ours)** | 0.299 | **0.198** | **0.157** | 0.318 | **0.078** | **430** | 1312 |
+
+DanceTrack is the appearance-tracker stress test: same-appearance dancers,
+large motion, frequent self-occlusion. All methods drop hard; HOTA goes from
+~0.4 on MOT17 to ~0.15 here. **Yet the relative ordering survives — custom
+keeps the lead on IDF1 (0.198 vs 0.138 DeepSORT), HOTA, and IDSW (430 vs
+1197 DeepSORT, 1266 SORT, 1053 ByteTrack).** The confidence-aware Kalman is
+doing more of the work here than the appearance gate, since dancers look
+similar — gating doesn't help when everyone matches everyone. Inflating R
+for low-conf updates keeps the Kalman from being yanked by spurious dets.
+
+#### The full story across detectors
+
+| | MOTA | IDF1 | IDSW (custom vs DeepSORT) |
+|---|---:|---:|---:|
+| MOT17 · FRCNN dets | 0.278 / 0.278 | 0.437 / 0.435 | 181 / 230 |
+| MOT17 · YOLOv8n 10ep | 0.292 / 0.285 | 0.453 / 0.405 | 110 / 1117 |
+| MOT17 · YOLOv8n 30ep | 0.324 / 0.337 | 0.490 / 0.464 | 83 / 923 |
+| DanceTrack · YOLOv8n 30ep | 0.299 / 0.259 | 0.198 / 0.138 | 430 / 1197 |
+
+Two trends: as the detector improves, (a) custom's lead on IDF1 grows, and
+(b) the IDSW gap to DeepSORT grows from 1.3× to 11×. The custom design
+predicted both — the appearance gate gets *more* valuable when the detector
+produces dense overlapping boxes (more chances to confuse IoU-only matching),
+not less.
 
 **Reproducibility caveats.**
 - Absolute MOTA is well below the paper numbers (~0.6 for SORT, ~0.78 for

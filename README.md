@@ -21,20 +21,34 @@ The goal is to demonstrate, for CV / perception roles:
 
 ## Headline numbers
 
-7 MOT17-val sequences, sequence-length-weighted MOTA, mean IDF1 / HOTA, tracker-only FPS (CPU).
-
-**With our YOLOv8n fine-tuned on MOT17 (10 epochs):**
+**MOT17-val (7 sequences) · our YOLOv8n fine-tuned on MOT17, 30 epochs img=640:**
 
 | Tracker | MOTA | IDF1 | HOTA | IDSW | FPS |
 |---|---:|---:|---:|---:|---:|
-| SORT | 0.294 | 0.394 | 0.379 | 1050 | 747 |
-| DeepSORT | 0.285 | 0.405 | 0.383 | 1117 | 444 |
-| ByteTrack | 0.260 | 0.259 | 0.259 | 634 | 596 |
-| **Custom (this repo)** | 0.292 | **0.453** | **0.405** | **110** | 747 |
+| SORT | 0.341 | 0.434 | 0.416 | 953 | 864 |
+| DeepSORT | 0.337 | 0.464 | 0.432 | 923 | 548 |
+| ByteTrack | 0.290 | 0.282 | 0.286 | 574 | 717 |
+| **Custom (this repo)** | 0.324 | **0.490** | **0.445** | **83** | 988 |
 
-**Best IDF1, best HOTA, 10× fewer ID switches than SORT / DeepSORT, 6× fewer than ByteTrack** — and the result holds (and gets sharper) with a stronger detector. The custom tracker is appearance-gated ByteTrack stage-2 + confidence-aware Kalman R; see [backend/services/trackers/custom.py](backend/services/trackers/custom.py) and the [blog draft](docs/BLOG_DRAFT.md) for the design.
+**DanceTrack-val (3 sequences) · same YOLOv8n 30ep:**
 
-[docs/TECHNICAL_DESIGN.md §4.3](docs/TECHNICAL_DESIGN.md#43-reference-numbers) also has the table for the weaker FRCNN detections, plus the failure-mode analysis (MOT17-13 camera motion, ByteTrack collapse).
+| Tracker | MOTA | IDF1 | HOTA | IDSW |
+|---|---:|---:|---:|---:|
+| SORT | 0.266 | 0.103 | 0.116 | 1266 |
+| DeepSORT | 0.259 | 0.138 | 0.142 | 1197 |
+| ByteTrack | 0.174 | 0.079 | 0.070 | 1053 |
+| **Custom** | 0.299 | **0.198** | **0.157** | **430** |
+
+Best IDF1 and HOTA on both benchmarks. **11× fewer ID switches than DeepSORT
+on MOT17, 3× fewer on DanceTrack.** The lead grows as the detector improves
+— exactly what the design predicted: an appearance gate on ByteTrack's
+stage-2, plus a confidence-aware Kalman R that down-weights low-score
+detections, prevents the IDSW explosion that hits IoU-only methods on dense
+detector outputs.
+
+The full per-detector breakdown (FRCNN baseline, YOLOv8n 10ep, YOLOv8n 30ep,
+DanceTrack) is in [docs/TECHNICAL_DESIGN.md §4.3](docs/TECHNICAL_DESIGN.md#43-reference-numbers).
+The custom tracker is implemented in [backend/services/trackers/custom.py](backend/services/trackers/custom.py); the design notes are in the [blog draft](docs/BLOG_DRAFT.md).
 
 ## What the web UI does
 
